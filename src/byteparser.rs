@@ -3,9 +3,10 @@ use sbpf_assembler::astnode::{ASTNode, ROData};
 use sbpf_assembler::parser::ParseResult;
 use sbpf_assembler::parser::Token;
 use sbpf_common::{
-    inst_param::{Number, Register},
+    inst_param::Number,
     instruction::Instruction,
     opcode::Opcode,
+    syscalls::REGISTERED_SYSCALLS,
 };
 //use syscall_map::murmur3_32;
 
@@ -117,9 +118,9 @@ pub fn parse_bytecode(bytes: &[u8]) -> Result<ParseResult, SbpfLinkerError> {
                 if let Some(symbol) = symbol {
                     if symbol.section_index().is_none() {
                         // External symbol - check if it's a syscall
-                        if let Ok(symbol_name) = symbol.name() {
-                            if symbol_name.starts_with("sol_") {
-                                // This is a syscall - replace immediate with symbol name for later relocation
+                         if let Ok(symbol_name) = symbol.name() {
+                             if REGISTERED_SYSCALLS.contains(&symbol_name) {
+                                 // This is a syscall - replace immediate with symbol name for later relocation
                                 if let Some(inst) =
                                     ast.get_instruction_at_offset(rel.0)
                                 {

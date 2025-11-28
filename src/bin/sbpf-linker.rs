@@ -11,6 +11,7 @@ use aya_rustc_llvm_proxy as _;
 use bpf_linker::{Cpu, Linker, LinkerOptions, OptLevel, OutputType};
 use clap::{Parser, error::ErrorKind};
 use object::{File, Object as _, ObjectSymbol as _};
+use sbpf_common::syscalls::REGISTERED_SYSCALLS;
 use sbpf_linker::{SbpfLinkerError, link_program};
 
 #[derive(Debug, thiserror::Error)]
@@ -251,16 +252,16 @@ fn detect_sol_syscalls(inputs: &[PathBuf]) -> HashSet<String> {
         // Only attempt to parse ELF objects, skip if bitcode parsing fails
         if let Ok(data) = std::fs::read(path) {
             if let Ok(obj) = File::parse(&*data) {
-                for sym in obj.symbols() {
-                    // Undefined symbols starting with sol_ are considered syscalls
-                    if sym.section_index().is_none() {
-                        if let Ok(name) = sym.name() {
-                            if name.starts_with("sol_") {
-                                syscalls.insert(name.to_string());
-                            }
-                        }
-                    }
-                }
+                 for sym in obj.symbols() {
+                     // Undefined symbols in REGISTERED_SYSCALLS are considered syscalls
+                     if sym.section_index().is_none() {
+                         if let Ok(name) = sym.name() {
+                             if REGISTERED_SYSCALLS.contains(&name) {
+                                 syscalls.insert(name.to_string());
+                             }
+                         }
+                     }
+                 }
             }
         }
     }
