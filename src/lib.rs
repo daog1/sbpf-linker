@@ -20,6 +20,8 @@ pub enum SbpfLinkerError {
     BuildProgramError { errors: Vec<CompileError> },
     #[error("Instruction Parse Error. Error detail: ({0}).")]
     InstructionParseError(String),
+    #[error("Unsupported Relocation. Error detail: ({0}).")]
+    UnsupportedRelocation(String),
 }
 
 pub fn link_program(source: &[u8]) -> Result<Vec<u8>, SbpfLinkerError> {

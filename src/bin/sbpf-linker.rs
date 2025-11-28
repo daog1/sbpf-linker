@@ -1,4 +1,6 @@
-use std::{env, ffi::CString, fs, path::PathBuf, str::FromStr};
+use std::{
+    collections::HashSet, env, ffi::CString, fs, path::PathBuf, str::FromStr,
+};
 
 #[cfg(any(
     feature = "rust-llvm-19",
@@ -8,6 +10,7 @@ use std::{env, ffi::CString, fs, path::PathBuf, str::FromStr};
 use aya_rustc_llvm_proxy as _;
 use bpf_linker::{Cpu, Linker, LinkerOptions, OptLevel, OutputType};
 use clap::{Parser, error::ErrorKind};
+use object::{File, Object as _, ObjectSymbol as _};
 use sbpf_linker::{SbpfLinkerError, link_program};
 
 #[derive(Debug, thiserror::Error)]
@@ -171,7 +174,7 @@ fn main() -> Result<(), CliError> {
         })?;
 
     // TODO: the data is owned by this call frame; we could make this zero-alloc.
-    let export_symbols = export_symbols
+    let mut export_symbols: HashSet<_> = export_symbols
         .as_deref()
         .into_iter()
         .flat_map(str::lines)
@@ -179,6 +182,11 @@ fn main() -> Result<(), CliError> {
         .chain(export)
         .map(Into::into)
         .collect();
+
+    // Automatically export Solana syscalls from input object files to avoid being optimized away after internalization
+    for syscall in detect_sol_syscalls(&inputs) {
+        export_symbols.insert(syscall.into());
+    }
 
     let optimize = match *optimize.as_slice() {
         [] => unreachable!("emit has a default value"),
@@ -235,4 +243,26 @@ fn main() -> Result<(), CliError> {
         .map_err(|e| CliError::ProgramWriteError { msg: e.to_string() })?;
 
     Ok(())
+}
+
+fn detect_sol_syscalls(inputs: &[PathBuf]) -> HashSet<String> {
+    let mut syscalls = HashSet::new();
+    for path in inputs {
+        // Only attempt to parse ELF objects, skip if bitcode parsing fails
+        if let Ok(data) = std::fs::read(path) {
+            if let Ok(obj) = File::parse(&*data) {
+                for sym in obj.symbols() {
+                    // Undefined symbols starting with sol_ are considered syscalls
+                    if sym.section_index().is_none() {
+                        if let Ok(name) = sym.name() {
+                            if name.starts_with("sol_") {
+                                syscalls.insert(name.to_string());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    syscalls
 }

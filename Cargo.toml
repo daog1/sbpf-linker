@@ -17,9 +17,10 @@ name = "sbpf_linker"
 
 [dependencies]
 # TODO: update versions for sbpf-assembler and sbpf-common
-sbpf-assembler = "0.1.5"
-sbpf-common = "0.1.5"
+sbpf-assembler = { path = "../sbpf/crates/assembler" }
+sbpf-common = { path = "../sbpf/crates/common" }
 clap = { version = "4.5.13", features = ["derive"] }
+either = { version = "1.15.0", features = ["serde"] }
 object = "0.37.3"
 bpf-linker = "0.9.15"
 thiserror = "2.0.17"
