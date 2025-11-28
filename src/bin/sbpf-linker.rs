@@ -211,7 +211,7 @@ fn main() -> Result<(), CliError> {
             .into_iter()
             .map(|cstring| cstring.into_string().unwrap_or_default())
             .collect(),
-        disable_expand_memcpy_in_order,
+        disable_expand_memcpy_in_order: true,
         disable_memory_builtins,
         btf,
         allow_bpf_trap,
@@ -252,16 +252,16 @@ fn detect_sol_syscalls(inputs: &[PathBuf]) -> HashSet<String> {
         // Only attempt to parse ELF objects, skip if bitcode parsing fails
         if let Ok(data) = std::fs::read(path) {
             if let Ok(obj) = File::parse(&*data) {
-                 for sym in obj.symbols() {
-                     // Undefined symbols in REGISTERED_SYSCALLS are considered syscalls
-                     if sym.section_index().is_none() {
-                         if let Ok(name) = sym.name() {
-                             if REGISTERED_SYSCALLS.contains(&name) {
-                                 syscalls.insert(name.to_string());
-                             }
-                         }
-                     }
-                 }
+                for sym in obj.symbols() {
+                    // Undefined symbols in REGISTERED_SYSCALLS are considered syscalls
+                    if sym.section_index().is_none() {
+                        if let Ok(name) = sym.name() {
+                            if REGISTERED_SYSCALLS.contains(&name) {
+                                syscalls.insert(name.to_string());
+                            }
+                        }
+                    }
+                }
             }
         }
     }
