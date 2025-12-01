@@ -1,27 +1,53 @@
 use sbpf_assembler::ast::AST;
-use sbpf_assembler::astnode::{ASTNode, ROData};
+use sbpf_assembler::astnode::{ASTNode, Label, ROData};
 use sbpf_assembler::parser::ParseResult;
 use sbpf_assembler::parser::Token;
+
 use sbpf_common::{
-    inst_param::Number,
-    instruction::Instruction,
-    opcode::Opcode,
+    inst_param::Number, instruction::Instruction, opcode::Opcode,
     syscalls::REGISTERED_SYSCALLS,
 };
 //use syscall_map::murmur3_32;
 
 use either::Either;
 use object::RelocationTarget::Symbol;
-use object::{File, Object as _, ObjectSection as _, ObjectSymbol as _};
+use object::{
+    File, Object as _, ObjectSection as _, ObjectSymbol as _, SymbolKind,
+};
 
 use std::collections::HashMap;
 
 use crate::SbpfLinkerError;
 
 pub fn parse_bytecode(bytes: &[u8]) -> Result<ParseResult, SbpfLinkerError> {
+    eprintln!("parse_bytecode");
     let mut ast = AST::new();
 
     let obj = File::parse(bytes)?;
+    let mut entry_address = 0x0;
+    let mut symbol_offset_map = HashMap::new();
+
+    for symbol in obj.symbols() {
+        if symbol.kind() == SymbolKind::Text && symbol.is_global() {
+            if let Ok(name) = symbol.name() {
+                let func_offset = symbol.address();
+
+                ast.nodes.push(ASTNode::Label {
+                    label: Label {
+                        name: name.to_string(),
+                        span: 0..0, // 可以使用默认 span
+                    },
+                    offset: func_offset,
+                });
+
+                symbol_offset_map.insert(name.to_string(), symbol.address());
+                if name == "entrypoint" {
+                    entry_address = func_offset;
+                }
+                eprintln!("add function {} {}", name, symbol.address());
+            }
+        }
+    }
 
     // Find all rodata sections - could be .rodata, .rodata.str1.1, etc.
     let ro_sections: Vec<_> = obj
@@ -36,9 +62,23 @@ pub fn parse_bytecode(bytes: &[u8]) -> Result<ParseResult, SbpfLinkerError> {
         // only handle symbols in the .rodata section for now
         let mut rodata_offset = 0;
         for symbol in obj.symbols() {
+            eprintln!("obj.symbol: {:?} {}", symbol.name(), symbol.address());
+            /*if symbol.name() == Ok("entrypoint") {
+                entry_address = symbol.address();
+                eprintln!(
+                    "obj.symbol: {:?} {}",
+                    symbol.name(),
+                    symbol.address()
+                );
+            }*/
             if symbol.section_index() == Some(ro_section.index())
                 && symbol.size() > 0
             {
+                eprintln!(
+                    "ro_section: {:?} {}",
+                    symbol.name(),
+                    symbol.address()
+                );
                 let mut bytes = Vec::new();
                 for i in 0..symbol.size() {
                     bytes.push(Number::Int(i64::from(
@@ -118,9 +158,15 @@ pub fn parse_bytecode(bytes: &[u8]) -> Result<ParseResult, SbpfLinkerError> {
                 if let Some(symbol) = symbol {
                     if symbol.section_index().is_none() {
                         // External symbol - check if it's a syscall
-                         if let Ok(symbol_name) = symbol.name() {
-                             if REGISTERED_SYSCALLS.contains(&symbol_name) {
-                                 // This is a syscall - replace immediate with symbol name for later relocation
+                        if let Ok(symbol_name) = symbol.name() {
+                            eprintln!(
+                                "section.relocations: {:?} {} offset {}",
+                                symbol.name(),
+                                symbol.address(),
+                                rel.0
+                            );
+                            if REGISTERED_SYSCALLS.contains(&symbol_name) {
+                                // This is a syscall - replace immediate with symbol name for later relocation
                                 if let Some(inst) =
                                     ast.get_instruction_at_offset(rel.0)
                                 {
@@ -130,11 +176,43 @@ pub fn parse_bytecode(bytes: &[u8]) -> Result<ParseResult, SbpfLinkerError> {
                                 }
                                 handled_relocations += 1;
                                 continue;
+                            } else {
+                                if let Some(inst) =
+                                    ast.get_instruction_at_offset(rel.0)
+                                {
+                                    inst.imm = Some(Either::Right(
+                                        Number::Int(symbol.address() as i64),
+                                    ));
+                                }
+                                //handled_relocations += 1;
+                                //continue;
                             }
+                            handled_relocations += 1;
+                            continue;
                         }
                         // Non-syscall external symbol - skip
                         handled_relocations += 1;
                         continue;
+                    } else {
+                        if let Ok(symbol_name) = symbol.name() {
+                            if let Some(symbol_offset) =
+                                symbol_offset_map.get(symbol_name)
+                            {
+                                let node = ast
+                                    .get_instruction_at_offset(rel.0)
+                                    .unwrap();
+                                node.imm = Some(Either::Left(
+                                    symbol_name.to_string(),
+                                ));
+                                handled_relocations += 1;
+                                continue;
+                            } else {
+                                unhandled_relocations.push(format!(
+                                    "Symbol '{}' not found in symbol offset map at offset 0x{:x}",
+                                    symbol_name, rel.0
+                                ));
+                            }
+                        }
                     }
                     // addend is not explicit in the relocation entry, but implicitly encoded
                     // as the immediate value of the instruction
@@ -191,5 +269,21 @@ pub fn parse_bytecode(bytes: &[u8]) -> Result<ParseResult, SbpfLinkerError> {
     }
 
     ast.build_program()
+        .map(|mut parse_result| {
+            /*for (func_name, func_addr) in symbol_offset_map {
+                if func_name == "entrypoint" {
+                    parse_result
+                        .dynamic_symbols
+                        .add_entry_point(func_name, func_addr);
+                } else {
+                    parse_result
+                        .dynamic_symbols
+                        .add_call_target(func_name, func_addr);
+                }
+            }*/
+            // Set entry_address from AST
+            parse_result.entry_address = entry_address;
+            parse_result
+        })
         .map_err(|errors| SbpfLinkerError::BuildProgramError { errors })
 }
