@@ -188,8 +188,8 @@ fn main() -> Result<(), CliError> {
     for syscall in detect_sol_syscalls(&inputs) {
         export_symbols.insert(syscall.into());
     }
-   // export_symbols.insert("vyper_entrypoint".into());
-   // export_symbols.insert("sol_log_64_".into());
+    // export_symbols.insert("vyper_entrypoint".into());
+    // export_symbols.insert("sol_log_64_".into());
     eprintln!("export_symbols: {:?}", export_symbols);
 
     let optimize = match *optimize.as_slice() {

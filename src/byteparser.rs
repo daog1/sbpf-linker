@@ -11,14 +11,14 @@ use sbpf_common::{
 
 use either::Either;
 use object::RelocationTarget::Symbol;
-use object::{
-    File, Object as _, ObjectSection as _, ObjectSymbol as _, SymbolKind,
-};
+use object::{File, Object as _, ObjectSection as _, ObjectSymbol as _, SectionIndex, SymbolKind};
 
 use std::collections::HashMap;
 
 use crate::SbpfLinkerError;
-
+fn rodata_table_contains_name(rodata_table: &HashMap<(SectionIndex, u64), String>, name: &str) -> bool {
+    rodata_table.values().any(|existing_name| existing_name == name)
+}
 pub fn parse_bytecode(bytes: &[u8]) -> Result<ParseResult, SbpfLinkerError> {
     eprintln!("parse_bytecode");
     let mut ast = AST::new();
@@ -28,7 +28,8 @@ pub fn parse_bytecode(bytes: &[u8]) -> Result<ParseResult, SbpfLinkerError> {
     let mut symbol_offset_map = HashMap::new();
 
     for symbol in obj.symbols() {
-        if symbol.kind() == SymbolKind::Text && symbol.is_global() {
+        if symbol.kind() == SymbolKind::Text {
+            //&& symbol.is_global() {
             if let Ok(name) = symbol.name() {
                 let func_offset = symbol.address();
 
@@ -57,20 +58,13 @@ pub fn parse_bytecode(bytes: &[u8]) -> Result<ParseResult, SbpfLinkerError> {
         })
         .collect();
 
-    let mut rodata_table = HashMap::new();
+    let mut rodata_table:HashMap<(SectionIndex,u64), String> = HashMap::new();
     for ro_section in &ro_sections {
         // only handle symbols in the .rodata section for now
         let mut rodata_offset = 0;
         for symbol in obj.symbols() {
             eprintln!("obj.symbol: {:?} {}", symbol.name(), symbol.address());
-            /*if symbol.name() == Ok("entrypoint") {
-                entry_address = symbol.address();
-                eprintln!(
-                    "obj.symbol: {:?} {}",
-                    symbol.name(),
-                    symbol.address()
-                );
-            }*/
+
             if symbol.section_index() == Some(ro_section.index())
                 && symbol.size() > 0
             {
@@ -79,29 +73,31 @@ pub fn parse_bytecode(bytes: &[u8]) -> Result<ParseResult, SbpfLinkerError> {
                     symbol.name(),
                     symbol.address()
                 );
-                let mut bytes = Vec::new();
-                for i in 0..symbol.size() {
-                    bytes.push(Number::Int(i64::from(
-                        ro_section.data().unwrap()
-                            [(symbol.address() + i) as usize],
-                    )));
+                if ! rodata_table_contains_name(&rodata_table,symbol.name().unwrap()) {
+                    let mut bytes = Vec::new();
+                    for i in 0..symbol.size() {
+                        bytes.push(Number::Int(i64::from(
+                            ro_section.data().unwrap()
+                                [(symbol.address() + i) as usize],
+                        )));
+                    }
+                    ast.rodata_nodes.push(ASTNode::ROData {
+                        rodata: ROData {
+                            name: symbol.name().unwrap().to_owned(),
+                            args: vec![
+                                Token::Directive(String::from("byte"), 0..1), //
+                                Token::VectorLiteral(bytes.clone(), 0..1),
+                            ],
+                            span: 0..1,
+                        },
+                        offset: rodata_offset,
+                    });
+                    rodata_table.insert(
+                        (symbol.section_index().unwrap_or(object::SectionIndex(0)), symbol.address()),
+                        symbol.name().unwrap().to_owned(),
+                    );
+                    rodata_offset += symbol.size();
                 }
-                ast.rodata_nodes.push(ASTNode::ROData {
-                    rodata: ROData {
-                        name: symbol.name().unwrap().to_owned(),
-                        args: vec![
-                            Token::Directive(String::from("byte"), 0..1), //
-                            Token::VectorLiteral(bytes.clone(), 0..1),
-                        ],
-                        span: 0..1,
-                    },
-                    offset: rodata_offset,
-                });
-                rodata_table.insert(
-                    (symbol.section_index(), symbol.address()),
-                    symbol.name().unwrap().to_owned(),
-                );
-                rodata_offset += symbol.size();
             }
         }
         ast.set_rodata_size(rodata_offset);
@@ -225,7 +221,7 @@ pub fn parse_bytecode(bytes: &[u8]) -> Result<ParseResult, SbpfLinkerError> {
                         _ => 0,
                     };
 
-                    let key = (symbol.section_index(), addend as u64);
+                    let key = (symbol.section_index().unwrap_or(object::SectionIndex(0)), addend as u64);
                     if rodata_table.contains_key(&key) {
                         // Replace the immediate value with the rodata label
                         let ro_label = &rodata_table[&key];
